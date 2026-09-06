@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Runner — CS Endless Runner</title>
+<style>
+*{box-sizing:border-box}
+:root{--bg:#07110b;--panel:#0b1710;--green:#38ff88;--dim:#79a98a;--red:#ff5c6c;--yellow:#ffd166}
+body{
+  margin:0; min-height:100vh; display:grid; place-items:center; padding:18px;
+  background:radial-gradient(circle at 50% 20%,#102719 0,#07110b 48%,#030705 100%);
+  color:#d9ffe5; font-family:Consolas,Monaco,"Courier New",monospace;
+}
+.wrap{width:min(1000px,100%);text-align:center}
+h1{margin:0 0 6px;font-size:clamp(24px,5vw,44px);color:var(--green);text-shadow:0 0 18px #38ff8840}
+.sub{margin:0 0 14px;color:var(--dim);font-size:13px}
+.game{
+  position:relative; overflow:hidden; width:100%; height:390px;
+  border:1px solid #1d5a31; border-radius:16px; background:#06100a;
+  box-shadow:0 0 35px #000 inset,0 0 30px #38ff8810;
+  touch-action:manipulation;
+}
+canvas{display:block;width:100%;height:100%}
+.hud{
+  position:absolute;top:12px;left:14px;right:14px;display:flex;
+  justify-content:space-between;pointer-events:none;font-size:14px
+}
+.hud span{background:#06100acc;border:1px solid #1b4a2a;padding:7px 10px;border-radius:8px}
+.overlay{
+  position:absolute;inset:0;display:grid;place-items:center;background:#030705aa;
+  backdrop-filter:blur(2px)
+}
+.card{max-width:560px;padding:28px}
+.card h2{font-size:30px;color:var(--green);margin:0 0 12px}
+.card p{color:#9ac3a8;line-height:1.6;font-size:14px}
+button{
+  margin-top:10px;border:1px solid var(--green);background:#0b2414;color:var(--green);
+  padding:12px 20px;border-radius:9px;font:inherit;font-weight:bold;cursor:pointer;
+  box-shadow:0 0 18px #38ff8818
+}
+button:hover{background:#12371f}
+.tip{margin-top:10px;color:#557d63;font-size:12px}
+.hidden{display:none}
+@media(max-width:600px){.game{height:320px}.hud{font-size:11px}.card{padding:18px}.card h2{font-size:24px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>&lt; CODE RUNNER /&gt;</h1>
+  <p class="sub">Dodge bugs. Survive production. Beat your high score.</p>
+
+  <div class="game" id="game">
+    <canvas id="canvas"></canvas>
+
+    <div class="hud">
+      <span>SCORE: <b id="score">0</b></span>
+      <span>HI: <b id="high">0</b></span>
+      <span>LEVEL: <b id="level">1</b></span>
+    </div>
+
+    <div class="overlay" id="overlay">
+      <div class="card">
+        <h2 id="overlayTitle">> READY_</h2>
+        <p id="overlayText">
+          You are a developer running through production.<br>
+          Jump over CS errors and survive as long as possible.
+        </p>
+        <button id="startBtn">RUN PROGRAM ▶</button>
+        <div class="tip">SPACE / ↑ / TAP = JUMP</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="tip">Try to beat your high score. The system gets faster. 😈</p>
+</div>
+
+<script>
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+const game=document.getElementById("game");
+const scoreEl=document.getElementById("score");
+const highEl=document.getElementById("high");
+const levelEl=document.getElementById("level");
+const overlay=document.getElementById("overlay");
+const overlayTitle=document.getElementById("overlayTitle");
+const overlayText=document.getElementById("overlayText");
+const startBtn=document.getElementById("startBtn");
+
+let W=900,H=390,dpr=1;
+let running=false,score=0,high=Number(localStorage.getItem("codeRunnerHigh")||0);
+let speed=6,level=1,last=0,spawnTimer=0,groundY=320;
+let obstacles=[],particles=[],clouds=[];
+let player={x:85,y:0,w:38,h:52,vy:0,jumping:false};
+
+highEl.textContent=high;
+
+function resize(){
+  const r=game.getBoundingClientRect();
+  dpr=Math.min(devicePixelRatio||1,2);
+  W=r.width;H=r.height;
+  canvas.width=W*dpr;canvas.height=H*dpr;
+  canvas.style.width=W+"px";canvas.style.height=H+"px";
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  groundY=H-52;
+  player.y=groundY-player.h;
+}
+window.addEventListener("resize",resize);
+resize();
+
+function reset(){
+  score=0;speed=6;level=1;spawnTimer=0;obstacles=[];particles=[];
+  player.y=groundY-player.h;player.vy=0;player.jumping=false;
+  scoreEl.textContent=0;levelEl.textContent=1;
+}
+
+function start(){
+  reset();running=true;overlay.classList.add("hidden");last=performance.now();
+  requestAnimationFrame(loop);
+}
+
+function gameOver(){
+  running=false;
+  if(score>high){
+    high=score;
+    localStorage.setItem("codeRunnerHigh",high);
+    highEl.textContent=high;
+  }
+  overlayTitle.textContent="> SYSTEM CRASHED_";
+  overlayText.innerHTML=`Final score: <b>${score}</b><br><br>
+  ${score>high ? "New high score!" : "Production didn't survive this time."}<br>
+  Press restart and try again.`;
+  startBtn.textContent="RESTART PROGRAM ↻";
+  overlay.classList.remove("hidden");
+}
+
+function jump(){
+  if(!running)return start();
+  if(!player.jumping){
+    player.vy=-13.5;
+    player.jumping=true;
+    burst(player.x+18,groundY,7);
+  }
+}
+document.addEventListener("keydown",e=>{
+  if(["Space","ArrowUp"].includes(e.code)){e.preventDefault();jump()}
+  if(e.code==="Enter"&&!running)start();
+});
+game.addEventListener("pointerdown",e=>{if(e.target===canvas)jump()});
+startBtn.addEventListener("click",start);
+
+const types=[
+  {label:"404",sub:"NOT FOUND",w:48,h:48},
+  {label:"NULL",sub:"POINTER",w:64,h:48},
+  {label:"BUG",sub:"DETECTED",w:55,h:52},
+  {label:"SEGFAULT",sub:"CORE DUMP",w:90,h:48},
+  {label:"NaN",sub:"VALUE",w:54,h:48},
+  {label:"∞ LOOP",sub:"TIMEOUT",w:76,h:48}
+];
+
+function spawn(){
+  const t=types[Math.floor(Math.random()*types.length)];
+  obstacles.push({...t,x:W+20,y:groundY-t.h});
+}
+
+function burst(x,y,n){
+  for(let i=0;i<n;i++)particles.push({
+    x,y,vx:(Math.random()-.5)*4,vy:-Math.random()*4-1,
+    life:25+Math.random()*20
+  });
+}
+
+function collision(a,b){
+  const pad=7;
+  return a.x+pad<b.x+b.w && a.x+a.w-pad>b.x &&
+         a.y+pad<b.y+b.h && a.y+a.h-pad>b.y;
+}
+
+function update(dt){
+  player.vy+=.65*dt;
+  player.y+=player.vy*dt;
+  if(player.y>=groundY-player.h){
+    player.y=groundY-player.h;player.vy=0;player.jumping=false;
+  }
+
+  score+=Math.floor(dt*1.8);
+  level=1+Math.floor(score/250);
+  speed=6+Math.min(7,level*.55);
+  scoreEl.textContent=score;
+  levelEl.textContent=level;
+
+  spawnTimer-=dt*16.67;
+  const interval=Math.max(650,1350-level*45);
+  if(spawnTimer<=0){
+    spawn();
+    spawnTimer=interval;
+  }
+
+  obstacles.forEach(o=>o.x-=speed*dt);
+  obstacles=obstacles.filter(o=>o.x+o.w>-30);
+
+  for(const o of obstacles){
+    if(collision(player,o)){
+      burst(player.x+20,player.y+25,20);
+      gameOver();return;
+    }
+  }
+
+  particles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=.2*dt;p.life-=dt});
+  particles=particles.filter(p=>p.life>0);
+}
+
+function text(t,x,y,size=14,alpha=1){
+  ctx.globalAlpha=alpha;
+  ctx.font=`bold ${size}px Consolas,monospace`;
+  ctx.fillStyle="#38ff88";
+  ctx.fillText(t,x,y);
+  ctx.globalAlpha=1;
+}
+
+function drawGrid(){
+  ctx.fillStyle="#06100a";ctx.fillRect(0,0,W,H);
+
+  ctx.strokeStyle="#0d2516";ctx.lineWidth=1;
+  for(let x=0;x<W;x+=32){
+    ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+  }
+  for(let y=20;y<H;y+=32){
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+  }
+
+  ctx.strokeStyle="#1b5a30";
+  ctx.beginPath();ctx.moveTo(0,groundY);ctx.lineTo(W,groundY);ctx.stroke();
+
+  // moving terminal symbols
+  const shift=(performance.now()/18*speed)%80;
+  for(let x=-shift;x<W;x+=80)text("01",x,groundY+27,10,.18);
+}
+
+function drawPlayer(){
+  const x=player.x,y=player.y;
+  ctx.save();
+  ctx.translate(x,y);
+
+  // head
+  ctx.strokeStyle="#38ff88";ctx.lineWidth=2;
+  ctx.strokeRect(7,2,25,23);
+
+  // glasses
+  ctx.fillStyle="#38ff88";
+  ctx.fillRect(9,10,8,5);ctx.fillRect(22,10,8,5);
+  ctx.fillRect(17,12,5,2);
+
+  // body
+  ctx.strokeRect(10,27,21,18);
+  ctx.fillStyle="#38ff88";
+  ctx.fillRect(14,31,13,2);
+
+  // legs
+  ctx.strokeRect(10,45,7,7);ctx.strokeRect(24,45,7,7);
+
+  // little trailing code
+  ctx.globalAlpha=.45;
+  ctx.font="10px monospace";
+  ctx.fillText(">",0,15);
+  ctx.fillText("_",34,25);
+  ctx.restore();
+}
+
+function drawObstacle(o){
+  ctx.save();
+  ctx.fillStyle="#160b0e";
+  ctx.strokeStyle="#ff5c6c";
+  ctx.lineWidth=2;
+  ctx.shadowColor="#ff5c6c";ctx.shadowBlur=10;
+  ctx.fillRect(o.x,o.y,o.w,o.h);
+  ctx.strokeRect(o.x,o.y,o.w,o.h);
+  ctx.shadowBlur=0;
+
+  ctx.fillStyle="#ff5c6c";
+  ctx.font=`bold ${Math.max(11,Math.min(16,o.w/5))}px Consolas`;
+  ctx.textAlign="center";
+  ctx.fillText(o.label,o.x+o.w/2,o.y+21);
+  ctx.font="9px Consolas";
+  ctx.fillText(o.sub,o.x+o.w/2,o.y+36);
+  ctx.restore();
+}
+
+function drawParticles(){
+  for(const p of particles){
+    ctx.fillStyle="#38ff88";
+    ctx.globalAlpha=Math.max(0,p.life/40);
+    ctx.fillRect(p.x,p.y,3,3);
+  }
+  ctx.globalAlpha=1;
+}
+
+function draw(){
+  drawGrid();
+  drawPlayer();
+  obstacles.forEach(drawObstacle);
+  drawParticles();
+
+  // status line
+  text("root@developer:~$ ./survive-production",16,24,11,.35);
+}
+
+function loop(now){
+  if(!running){draw();return}
+  const dt=Math.min((now-last)/16.67,2);
+  last=now;
+  update(dt);
+  draw();
+  if(running)requestAnimationFrame(loop);
+}
+draw();
+</script>
+</body>
+</html>
